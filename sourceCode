@@ -1,0 +1,240 @@
+/* This is a LLVM project for In-lining a function into the caller function if all the arguments passed to 
+the function are constants. This project is for class ENPM 808T
+Authors of the code are:
+1. Pragya Saikia
+2. Shachee Shah
+3. Vinaykumar Yennam */
+
+//The following are all the imports for running our llvm pass
+#define DEBUG_TYPE "hello"//-hello
+#include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IRReader/IRReader.h>
+#include <llvm/Pass.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Instruction.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Attributes.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/Support/SourceMgr.h>
+#include <llvm/Transforms/Utils/BasicBlockUtils.h>
+#include <llvm/IR/InlineAsm.h>
+#include <llvm/IR/DerivedTypes.h>
+#include <llvm/Support/FormattedStream.h>
+#include <llvm/Support/MathExtras.h>
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/raw_ostream.h"
+#include <algorithm>
+#include <stack>
+#include <set>
+#include <iostream>
+#include <string>
+using namespace llvm;
+
+ int NumberofInstinFunction(CallInst* function);
+// void Return_Inst_store(CallInst* function);
+
+//Given stub code for writing a simple pass. This pass simply prints out all the function names in the given program
+namespace {
+	struct Hello :  public FunctionPass {
+		static char ID;                           
+		Hello() : FunctionPass(ID) {}
+	        //DEFINE_INTPASS_ANALYSIS_ADJUSTMENT(PointerAnalysisPass);
+	        /**
+	         * @brief Runs this pass on the given function.
+	         * @param [in,out] func The function to analyze
+	         * @return true if the function was modified; false otherwise
+	        */
+	        virtual bool runOnFunction(Function &F);
+
+			StringRef get_function_name(CallInst *call);
+	};
+}
+
+
+char Hello::ID = 0;
+static RegisterPass<Hello> X("hello", "Hello World Pass", false, false);
+
+bool Hello::runOnFunction(Function &F){
+bool modifiedFlag = false; //change modified
+
+for(Function::iterator block = F.begin(),i=0; block != F.end();i++, block++) {
+	
+	//This is Step 1 where we will be iterating over all the instructions.
+	/*1. Iterate over all instructions First iterate over all instructions in the original code and for each instruction 
+	cast it to a CallInst, if this succeeds then you have an instruction that is of interest. 
+	The CallInst class is defined in   http://llvm.org/doxygen/Instructions_8h_source.html. 
+	Some of functions of interest in this class are getCalledFunction()*/
+
+	for(BasicBlock::iterator inst = block->begin(); inst != block->end();++inst) {
+		Instruction * Inst = inst;
+		bool VarArgFlag = false;  
+		if(isa<CallInst>(Inst)){
+			CallInst* callInst = dyn_cast<CallInst>(Inst);
+			Function* call = callInst->getCalledFunction();			
+			Function *CalledFunc = callInst->getCalledFunction(); 
+			//If number of instructions in called function > 10, no in-lining.  
+			if(NumberofInstinFunction(callInst)<10){
+				// Called function should not be a declaration.
+				if (CalledFunc && !CalledFunc->isDeclaration()) {
+					StringRef functionName = CalledFunc->getName();   
+					errs() << functionName << '\n'; 
+					// Function::arg_iterator arg = CalledFunc->arg_begin();
+					//This is step 2.
+					/*Access the argument list of a function. arg_begin() arg_end()  iterators will help you to get to the 
+					arguments. This also is present in the CallInst class. Another way to access arguments is   
+					unsigned getNumArgOperands () const  --- gives number of operands  
+					Value * getArgOperand (unsigned i) const  -- will help you get the argument at index i*/  
+
+					for(int j = 0; j < callInst->getNumArgOperands(); j++){
+						Value* number = callInst->getArgOperand(j);
+						errs()<<" Printing arguments\n";
+						errs()<< *number << "\n";
+						/*Step 3 Check whether an actual argument is a constant. To know if an object of type Value* (say V) 
+						is a constant, the following code can be used   
+						if (isa<Constant>(V)) 
+							return true;*/
+
+						if (isa<Constant>(number)){
+							errs()<<" The argument passed is a constant\n";	
+						}
+						else{
+							errs()<<"The argument passed is not a constant\n";
+							VarArgFlag = true;
+							break;
+						}					
+					}
+					//if all the arguments passed are constant, we will follow step 4 to 7.
+					if(!VarArgFlag){
+						errs()<<"We can Start modification as all requirements are met\n";//step 4 - 8 code start from here 
+						/* Step 4 Create a constant symbol of type Value 
+						Create a new constant symbol in main memory with the value of the constant argument. 
+						To do this, use any suitable constructor in the ConstantInt class in LLVM. 
+						For example, in the code above create a constant called x with the value of 3 in the main memory. 
+						Note this constant is not added to IR yet. That is fine.  
+						Use the get( ) constructor in ConstantInt class for this purpose. Below is the prototype,		
+						static ConstantInt *  
+						get (IntegerType *Ty, uint64_t V, bool isSigned=false)
+						Return a ConstantInt with the specified integer value for the specified type.*/  
+
+
+						int count = 0;
+						for(Function::arg_iterator argiter=CalledFunc->arg_begin(); argiter != CalledFunc->arg_end(); argiter++, count++){
+							Value* argument = callInst->getArgOperand(count);
+							Constant *c = (Constant *) argument;
+							const APInt api = c->getUniqueInteger();
+							Constant *newC = ConstantInt::get(argiter->getType(), api);
+							errs()<< *newC << "...NewC\n";
+							errs()<< *c << "...c\n";
+							/*Step 5 Replace all uses of a formal argument with the constant symbol you created above
+							First, the Function class defined in http://llvm.org/doxygen/Function_8h_source.html gives you 
+							capabilities to access the arguments of a function.
+							You can iterate over the arguments using arg_begin() arg_end() . You can get to objects of class type Value from these.  
+							This class is defined in   http://llvm.org/doxygen/Value_8h_source.html
+							Let the formal argument corresponding to the constant be constArg.
+							Value * constArg 
+							Then, we can replace all uses of this argument with the constant you created in the previous step (x) as follows. 
+							We call replaceAllUsesWith(Value* V)  function on the object constArg as shown below :
+							constArg -> replaceAllUsesWith(x)
+							Note that this step does NOT remove the argument, it just makes it dead by removing all uses to it.*/
+							argiter->replaceAllUsesWith(newC);//Step 5
+							errs()<< *argiter <<"\n";
+							
+						}
+						
+						// The following code implements step 6. We broke step 6 into two parts. Part1 and part2.
+						llvm::ValueToValueMapTy vmap;
+						if(call != NULL && !call ->isDeclaration()){
+							
+							for (Function::iterator b = call->begin(), be = call->end(); b != be; ++b) {
+		           				for (BasicBlock::iterator i = b->begin(), ie = b->end(); i != ie; ++i) {
+									if(isa<ReturnInst>(i)) 
+										continue;
+									//This is step 6 part 1.
+	
+									Instruction *new_inst = i->clone();
+									new_inst->insertBefore(Inst);
+									vmap[i] = new_inst;
+									llvm::RemapInstruction(new_inst, vmap, RF_NoModuleLevelChanges);                    			
+								}
+							}
+						}
+						//This is Step 6 part 2 (retrieving the return instruction and storing it after call instruction 
+						//and then deleting call.
+						if(call != NULL && !call ->isDeclaration()){
+							
+						for (Function::iterator b = call->begin(), be = call->end(); b != be; ++b) {
+                    		for (BasicBlock::iterator i = b->begin(), ie = b->end(); i != ie; ++i) {
+								// Step 6 Part 2
+								if (ReturnInst *temp_return_inst = dyn_cast<ReturnInst>(&*i)) {
+								errs() << "Found the return instruction:\n"; // getting void
+								errs() << *temp_return_inst << "\n";
+
+								//Getting the position after the call instruction
+								Instruction *inst_after_func_call = ++inst;       
+								errs() << "Instruction after the function call: " ;
+								errs() << *inst_after_func_call << "\n";
+								// Let's get the position of the call instruction	
+								Instruction *inst_func_call = --inst;       
+								errs() << "Instruction of the function call: " ;
+								errs() << *inst_func_call << "\n";                            
+								// Go in even if there is no store but not if it is void
+								if(temp_return_inst->getNumOperands()!=0){ 
+                            	// going in only when store is after call instruction
+									Value *return_value = temp_return_inst->getReturnValue();
+									errs() << "Return value: " ;
+									errs() << *return_value << "\n";
+									errs() << "Store line detected after call \n";
+									// Now to add a store instruction after call with pointer of return value
+									// errs() << "Trying to insert store instruction after call " ;
+
+									//inst_after_func_call->replaceAllUsesWith(return_value);
+									// Replace all uses with the return value 
+									callInst->replaceAllUsesWith(vmap[return_value]);
+									// --inst;
+								}
+                                --inst;
+                                //step 7
+                                // Deleting call from main using erasefromParent
+								// should erase call even if there is no store after call
+                                inst_func_call->eraseFromParent(); 
+						}
+					}
+				}
+			} 
+
+
+						//step 4 - 7 code ends here
+						//Turn modifiedFlag to true if modified
+						bool modifiedFlag = true; 
+					}	
+				}
+			}else	
+			{
+				errs()<<"In-lining avoided as number of instructions are "<<NumberofInstinFunction(callInst)<<" inst\n";
+				
+			}
+		}
+		
+	}
+}
+return modifiedFlag;
+}
+
+ 
+
+int NumberofInstinFunction(CallInst* function){
+ 	int i=0;
+ 	Function* func = function->getCalledFunction();	
+ 	if(func!=NULL)
+	for(Function::iterator block = func->begin(); block != func->end(); block++) {
+		i=i+block->size();
+   }
+   errs()<<"Number of Instructions"<<i<<"\n";
+   return i;
+   errs()<<"Number of Instructions"<<i<<"\n";
+ }
